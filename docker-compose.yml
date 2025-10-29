@@ -137,25 +137,25 @@ services:
     networks:
       - web
 
-  orca-worker:
-    build: ./apps/RapidMaker/docker/orca-worker
-    image: orca-worker:latest
-    container_name: orca-worker
-    restart: unless-stopped
-    expose:
-      - 9090
-    environment:
-      - ORCA_WORKER_PORT=9090
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
-    volumes:
-      - /tmp/orca-workspace:/workspace
-    networks:
-      - web
+  # orca-worker:
+  #   build: ./apps/RapidMaker/docker/orca-worker
+  #   image: orca-worker:latest
+  #   container_name: orca-worker
+  #   restart: unless-stopped
+  #   expose:
+  #     - 9090
+  #   environment:
+  #     - ORCA_WORKER_PORT=9090
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 4G
+  #       reservations:
+  #         memory: 2G
+  #   volumes:
+  #     - /tmp/orca-workspace:/workspace
+  #   networks:
+  #     - web
 
   mailserver:
     image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
