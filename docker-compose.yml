@@ -9,6 +9,18 @@ services:
       - "80:80"
       - "443:443/tcp"
       - "443:443/udp"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./volumes/traefik/letsencrypt:/letsencrypt
@@ -16,7 +28,11 @@ services:
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      - "--ping=true"
       - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
       - "--entrypoints.websecure.address=:443"
       - "--log.level=INFO"
 
@@ -34,6 +50,9 @@ services:
       - "--entrypoints.websecure.http3=true"
       - "--entrypoints.websecure.http3.advertisedport=443"
 
+      # Security Headers (global)
+      - "--entrypoints.websecure.http.middlewares=security-headers@docker"
+
       # CrowdSec Plugin
       - "--experimental.plugins.crowdsec-bouncer.modulename=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
       - "--experimental.plugins.crowdsec-bouncer.version=v1.4.5"
@@ -48,7 +67,18 @@ services:
       PGID: "1000"
       COLLECTIONS: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/postfix crowdsecurity/dovecot"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "cscli", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
     volumes:
       - ./volumes/crowdsec/config:/etc/crowdsec
       - ./volumes/crowdsec/data:/var/lib/crowdsec/data
@@ -65,9 +95,10 @@ services:
     container_name: rapidmaker
     restart: unless-stopped
     expose:
-      - 80
+      - 8080
     labels:
       - "traefik.enable=true"
+      - "traefik.http.services.rapidmaker.loadbalancer.server.port=8080"
 
       # HTTP -> HTTPS redirect
       - "traefik.http.routers.rapidmaker.rule=Host(`rapidmaker.pl`) || Host(`www.rapidmaker.pl`)"
@@ -83,6 +114,17 @@ services:
       # Middlewares
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+
+      # Security Headers (global middleware)
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.stsPreload=true"
+      - "traefik.http.middlewares.security-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.security-headers.headers.permissionsPolicy=geolocation=(),midi=(),sync-xhr=(),microphone=(),camera=(),magnetometer=(),gyroscope=(),fullscreen=(self),payment=()"
       - "traefik.http.middlewares.limit-buffer-rapidmaker.buffering.maxRequestBodyBytes=32505856"
       - "traefik.http.middlewares.limit-buffer-rapidmaker.buffering.memRequestBodyBytes=32505856"
       - "traefik.http.middlewares.ratelimit-rapidmaker.ratelimit.average=60"
@@ -100,6 +142,18 @@ services:
     container_name: mailserver
     hostname: mail.rapidmaker.pl
     restart: always
+    healthcheck:
+      test: ["CMD", "ss", "-lntp", "|", "grep", "-E", ":25|:587|:993"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
     ports:
       - "25:25"
       - "465:465"
@@ -108,6 +162,7 @@ services:
       - "11334:11334"
     volumes:
       - ./volumes/traefik/letsencrypt/acme.json:/etc/letsencrypt/acme.json:ro
+      - ./volumes/mailserver/config:/tmp/docker-mailserver
       - ./volumes/mailserver/data:/var/mail
       - ./volumes/mailserver/state:/var/mail-state
       - ./volumes/mailserver/logs:/var/log/mail
@@ -115,27 +170,21 @@ services:
     environment:
       - ENABLE_FAIL2BAN=1
       - FAIL2BAN_BLOCKTYPE=drop
+      - FAIL2BAN_IGNORE_IP=83.13.64.81
       - SSL_TYPE=letsencrypt
       - SSL_DOMAIN=mail.rapidmaker.pl
       - ENABLE_RSPAMD=1
       - ENABLE_CLAMAV=1
       - ENABLE_OAUTH2=0
       - ENABLE_OPENDKIM=0
-      - ENABLE_OPENDMARC=0
-      - ENABLE_POLICYD_SPF=0
+      - ENABLE_OPENDMARC=1
+      - ENABLE_POLICYD_SPF=1
       - ENABLE_AMAVIS=0
       - ENABLE_SPAMASSASSIN=0
       - ENABLE_POSTGREY=0
     cap_add:
       - NET_ADMIN
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mailserver.rule=Host(`mail.rapidmaker.pl`)"
-      - "traefik.http.routers.mailserver.entrypoints=websecure"
-      - "traefik.http.routers.mailserver.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.mailserver.middlewares=crowdsec-mailserver"
-      - "traefik.http.middlewares.crowdsec-mailserver.plugin.crowdsec-bouncer.enabled=true"
-      - "traefik.http.middlewares.crowdsec-mailserver.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+    # No Traefik labels - mailserver uses direct ports (25, 465, 587, 993)
     networks:
       - web
 
