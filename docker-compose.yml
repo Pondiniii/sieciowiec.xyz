@@ -1,0 +1,211 @@
+# version: '3.8'  # Removed obsolete version attribute (Docker Compose v2)
+
+services:
+  traefik:
+    image: traefik:v3.5.4
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./volumes/traefik/letsencrypt:/letsencrypt
+      - ./volumes/traefik/logs:/var/log/traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+
+      # FIXED: Enable access logs for CrowdSec
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+      - "--accesslog.format=json"
+
+      # Let's Encrypt
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+
+      # HTTP/3 (QUIC) - Native in v3, no longer experimental
+      - "--entrypoints.websecure.http3=true"
+      - "--entrypoints.websecure.http3.advertisedport=443"
+
+      # CrowdSec Plugin
+      - "--experimental.plugins.crowdsec-bouncer.modulename=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin"
+      - "--experimental.plugins.crowdsec-bouncer.version=v1.4.5"
+    networks:
+      - web
+
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.7.3
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      PGID: "1000"
+      COLLECTIONS: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/postfix crowdsecurity/dovecot"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./volumes/crowdsec/config:/etc/crowdsec
+      - ./volumes/crowdsec/data:/var/lib/crowdsec/data
+      - ./config/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./volumes/traefik/logs:/var/log/traefik:ro
+      - ./volumes/mailserver/logs:/var/log/mail:ro
+      - /var/log/auth.log:/var/log/auth.log:ro
+    networks:
+      - web
+
+  rapidmaker:
+    build: ./apps/RapidMaker
+    image: rapidmaker:latest
+    container_name: rapidmaker
+    restart: unless-stopped
+    expose:
+      - 80
+    labels:
+      - "traefik.enable=true"
+
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.rapidmaker.rule=Host(`rapidmaker.pl`) || Host(`www.rapidmaker.pl`)"
+      - "traefik.http.routers.rapidmaker.entrypoints=web"
+      - "traefik.http.routers.rapidmaker.middlewares=redirect-to-https"
+
+      # HTTPS
+      - "traefik.http.routers.rapidmaker-secure.rule=Host(`rapidmaker.pl`) || Host(`www.rapidmaker.pl`)"
+      - "traefik.http.routers.rapidmaker-secure.entrypoints=websecure"
+      - "traefik.http.routers.rapidmaker-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.rapidmaker-secure.middlewares=limit-buffer-rapidmaker,ratelimit-rapidmaker,crowdsec-rapidmaker"
+
+      # Middlewares
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+      - "traefik.http.middlewares.limit-buffer-rapidmaker.buffering.maxRequestBodyBytes=32505856"
+      - "traefik.http.middlewares.limit-buffer-rapidmaker.buffering.memRequestBodyBytes=32505856"
+      - "traefik.http.middlewares.ratelimit-rapidmaker.ratelimit.average=60"
+      - "traefik.http.middlewares.ratelimit-rapidmaker.ratelimit.burst=120"
+      - "traefik.http.middlewares.ratelimit-rapidmaker.ratelimit.period=1m"
+
+      # CrowdSec
+      - "traefik.http.middlewares.crowdsec-rapidmaker.plugin.crowdsec-bouncer.enabled=true"
+      - "traefik.http.middlewares.crowdsec-rapidmaker.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+    networks:
+      - web
+
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+    container_name: mailserver
+    hostname: mail.rapidmaker.pl
+    restart: always
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+      - "993:993"
+      - "11334:11334"
+    volumes:
+      - ./volumes/traefik/letsencrypt/acme.json:/etc/letsencrypt/acme.json:ro
+      - ./volumes/mailserver/data:/var/mail
+      - ./volumes/mailserver/state:/var/mail-state
+      - ./volumes/mailserver/logs:/var/log/mail
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - ENABLE_FAIL2BAN=1
+      - FAIL2BAN_BLOCKTYPE=drop
+      - SSL_TYPE=letsencrypt
+      - SSL_DOMAIN=mail.rapidmaker.pl
+      - ENABLE_RSPAMD=1
+      - ENABLE_CLAMAV=1
+      - ENABLE_OAUTH2=0
+      - ENABLE_OPENDKIM=0
+      - ENABLE_OPENDMARC=0
+      - ENABLE_POLICYD_SPF=0
+      - ENABLE_AMAVIS=0
+      - ENABLE_SPAMASSASSIN=0
+      - ENABLE_POSTGREY=0
+    cap_add:
+      - NET_ADMIN
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailserver.rule=Host(`mail.rapidmaker.pl`)"
+      - "traefik.http.routers.mailserver.entrypoints=websecure"
+      - "traefik.http.routers.mailserver.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mailserver.middlewares=crowdsec-mailserver"
+      - "traefik.http.middlewares.crowdsec-mailserver.plugin.crowdsec-bouncer.enabled=true"
+      - "traefik.http.middlewares.crowdsec-mailserver.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+    networks:
+      - web
+
+  obsidian-livesync:
+    image: couchdb:3.5.0
+    container_name: obsidian-livesync
+    user: "1000:1000"
+    restart: unless-stopped
+    environment:
+      - COUCHDB_USER=${COUCHDB_USER}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD}
+    volumes:
+      - ./volumes/couchdb/data:/opt/couchdb/data
+      - ./volumes/couchdb/config:/opt/couchdb/etc
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.obsidian-livesync.rule=Host(`obsidian-livesync.sieciowiec.xyz`)"
+      - "traefik.http.routers.obsidian-livesync.entrypoints=web"
+      - "traefik.http.routers.obsidian-livesync.middlewares=redirect-to-https"
+      - "traefik.http.routers.obsidian-livesync-secure.rule=Host(`obsidian-livesync.sieciowiec.xyz`)"
+      - "traefik.http.routers.obsidian-livesync-secure.entrypoints=websecure"
+      - "traefik.http.routers.obsidian-livesync-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.obsidian-livesync-secure.service=obsidian-livesync"
+      - "traefik.http.services.obsidian-livesync.loadbalancer.server.port=5984"
+      - "traefik.http.routers.obsidian-livesync-secure.tls=true"
+      - "traefik.http.routers.obsidian-livesync-secure.middlewares=obsidiancors,ratelimit-obsidian,crowdsec-obsidian"
+
+      # CORS for Obsidian
+      - "traefik.http.middlewares.obsidiancors.headers.accesscontrolallowmethods=GET,PUT,POST,HEAD,DELETE"
+      - "traefik.http.middlewares.obsidiancors.headers.accesscontrolallowheaders=accept,authorization,content-type,origin,referer"
+      - "traefik.http.middlewares.obsidiancors.headers.accesscontrolalloworiginlist=app://obsidian.md,capacitor://localhost,http://localhost"
+      - "traefik.http.middlewares.obsidiancors.headers.accesscontrolmaxage=3600"
+      - "traefik.http.middlewares.obsidiancors.headers.addvaryheader=true"
+      - "traefik.http.middlewares.obsidiancors.headers.accessControlAllowCredentials=true"
+
+      # Rate Limiting (permissive - 300 req/min, burst 600)
+      - "traefik.http.middlewares.ratelimit-obsidian.ratelimit.average=300"
+      - "traefik.http.middlewares.ratelimit-obsidian.ratelimit.burst=600"
+      - "traefik.http.middlewares.ratelimit-obsidian.ratelimit.period=1m"
+
+      # CrowdSec
+      - "traefik.http.middlewares.crowdsec-obsidian.plugin.crowdsec-bouncer.enabled=true"
+      - "traefik.http.middlewares.crowdsec-obsidian.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+    networks:
+      - web
+
+  blog:
+    image: ghcr.io/static-web-server/static-web-server:2.39.0
+    container_name: blog
+    restart: unless-stopped
+    volumes:
+      - ./apps/blog/public:/public:ro
+    command: ["--root", "/public", "--port", "80"]
+    labels:
+      - "traefik.enable=true"
+
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.blog.rule=Host(`sieciowiec.xyz`) || Host(`www.sieciowiec.xyz`)"
+      - "traefik.http.routers.blog.entrypoints=web"
+      - "traefik.http.routers.blog.middlewares=redirect-to-https"
+
+      # HTTPS
+      - "traefik.http.routers.blog-secure.rule=Host(`sieciowiec.xyz`) || Host(`www.sieciowiec.xyz`)"
+      - "traefik.http.routers.blog-secure.entrypoints=websecure"
+      - "traefik.http.routers.blog-secure.tls.certresolver=letsencrypt"
+      - "traefik.http.services.blog.loadbalancer.server.port=80"
+    networks:
+      - web
+
+networks:
+  web:
+    name: web
+    driver: bridge

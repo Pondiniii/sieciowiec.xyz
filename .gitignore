@@ -1,0 +1,30 @@
+# Secrets
+.env
+*.key
+*.pem
+
+# Data volumes (too large for git)
+volumes/
+
+# External git repos (managed via repos.txt)
+apps/*/
+
+# Logs
+*.log
+
+# Build artifacts
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak

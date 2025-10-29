@@ -1,0 +1,21 @@
+# System logs (SSH attacks, etc.)
+---
+filenames:
+  - /var/log/auth.log
+  - /var/log/syslog
+labels:
+  type: syslog
+
+# Traefik access logs (HTTP attacks, scanners, bots)
+---
+filenames:
+  - /var/log/traefik/access.log
+labels:
+  type: traefik
+
+# Mail server logs (SMTP attacks)
+---
+filenames:
+  - /var/log/mail/mail.log
+labels:
+  type: syslog
