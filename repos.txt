@@ -7,4 +7,4 @@
 apps/blog|git@github.com:Pondiniii/blog.git|master
 
 # RapidMaker application
-apps/RapidMaker|git@github.com:Pondiniii/rapidmaker.git|master
+apps/RapidMaker|git@github.com:Pondiniii/rapidmaker.git|feature/frontend-tailwind-polish
