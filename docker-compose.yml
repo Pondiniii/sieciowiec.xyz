@@ -86,12 +86,6 @@ services:
     networks:
       - web
 
-  # crowdsec-firewall-bouncer:
-  #   NOTE: Firewall bouncer not available for ARM64 architecture
-  #   Using Fail2Ban in mailserver instead for blocking
-  #   CrowdSec provides detection and alerting only
-
-
   rapidmaker:
     build: ./apps/RapidMaker
     image: rapidmaker:latest
