@@ -5,6 +5,7 @@
 
 # Data volumes (too large for git)
 volumes/
+storage-box-1tb/
 
 # External git repos (managed via repos.txt)
 apps/*/
