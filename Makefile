@@ -234,7 +234,7 @@ rebuild:
 blog-build:
 	@echo "🔨 Building blog with Zola..."
 	@docker run --rm \
-		-v $(PWD)/apps/blog:/project \
+		-v $(PWD)/services/blog:/project \
 		-v $(PWD)/volumes/blog-content:/project/content \
 		-w /project \
 		ghcr.io/getzola/zola:v0.21.0 build

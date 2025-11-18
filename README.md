@@ -62,7 +62,7 @@ make status    # Container status
 │   └── crowdsec/
 │       └── acquis.yaml     # Log sources
 │
-└── apps/                   # Application code (in git)
+└── services/               # Service code (in git)
     ├── RapidMaker/
     └── blog/
 ```

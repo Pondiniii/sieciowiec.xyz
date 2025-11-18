@@ -2,7 +2,7 @@
 
 services:
   traefik:
-    image: traefik:v3.5.4
+    image: traefik:v3.6.1
     container_name: traefik
     restart: unless-stopped
     ports:
@@ -87,7 +87,7 @@ services:
       - web
 
   rapidmaker:
-    build: ./apps/RapidMaker
+    build: ./services/RapidMaker
     image: rapidmaker:latest
     container_name: rapidmaker
     restart: unless-stopped
@@ -131,26 +131,6 @@ services:
       # CrowdSec - DISABLED FOR TESTING
       # - "traefik.http.middlewares.crowdsec-rapidmaker.plugin.crowdsec-bouncer.enabled=true"
       # - "traefik.http.middlewares.crowdsec-rapidmaker.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
-    networks:
-      - web
-
-  orca-worker:
-    build: ./apps/RapidMaker/docker/orca-worker
-    image: orca-worker:latest
-    container_name: orca-worker
-    restart: unless-stopped
-    expose:
-      - 9090
-    environment:
-      - ORCA_WORKER_PORT=9090
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
-    volumes:
-      - /tmp/orca-workspace:/workspace
     networks:
       - web
 
@@ -266,7 +246,7 @@ services:
     container_name: blog
     restart: unless-stopped
     volumes:
-      - ./apps/blog/public:/public:ro
+      - ./services/blog/public:/public:ro
     command: ["--root", "/public", "--port", "80"]
     labels:
       - "traefik.enable=true"

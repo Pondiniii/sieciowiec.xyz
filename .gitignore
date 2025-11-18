@@ -8,6 +8,7 @@ volumes/
 
 # External git repos (managed via repos.txt)
 apps/*/
+services/*/
 
 # Logs
 *.log
